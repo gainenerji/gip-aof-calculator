@@ -169,7 +169,7 @@ def fetch_all_transaction_history_chunked(
     end_iso,
     progress_callback=None,
     slot_progress_callback=None,
-    chunk_days=7,
+    chunk_days=None,
     max_workers=4,
     max_retries=3,
     retry_base_delay=5.0,
@@ -178,8 +178,13 @@ def fetch_all_transaction_history_chunked(
     Uzun tarih aralıklarını API'nin 7 günlük sınırını aşmadan paralel olarak çeker.
 
     Tarih aralığını `chunk_days` günlük parçalara böler ve `max_workers` kadar
-    chunk'ı eş zamanlı olarak çeker. chunk_days=7 ile her chunk 6d 23:59:59 span
-    kapsar (API limiti olan 7 günün altında).
+    chunk'ı eş zamanlı olarak çeker.
+
+    chunk_days otomatik hesaplama kuralı (chunk_days=None ise):
+      - total_days <= max_workers * 3  →  chunk_days = 3
+      - total_days >  max_workers * 3  →  chunk_days = min(ceil(total_days / max_workers), 7)
+    Böylece her worker varsayılan olarak ~3 günlük veriden sorumlu tutulur;
+    tarih aralığı genişledikçe yük eşit dağıtılır (API 7 gün limitine uyulur).
 
     Parameters
     ----------
@@ -190,7 +195,7 @@ def fetch_all_transaction_history_chunked(
                              Genel ilerleme; ana thread'den çağrılır.
     slot_progress_callback : callable(slot_idx: int, pct: float, text: str) | None
                              Worker başına ilerleme; ana thread'den çağrılır.
-    chunk_days             : int   — Chunk başı gün sayısı (7 → 6d 23:59:59 span, <7 gün)
+    chunk_days             : int | None — Chunk başı gün sayısı; None → yukarıdaki kurala göre otomatik hesaplanır
     max_workers            : int   — Eş zamanlı chunk sayısı
     max_retries            : int   — Geçici hatalarda yeniden deneme sayısı
     retry_base_delay       : float — Exponential backoff base süresi (saniye): 5s→10s→20s
@@ -206,8 +211,18 @@ def fetch_all_transaction_history_chunked(
     from concurrent.futures import ThreadPoolExecutor, wait as _futures_wait, FIRST_COMPLETED
     import datetime as _dt
 
+    import math as _math
+
     start_dt = _dt.datetime.fromisoformat(start_iso)
     end_dt = _dt.datetime.fromisoformat(end_iso)
+
+    # chunk_days otomatik hesapla
+    if chunk_days is None:
+        total_days = (end_dt.date() - start_dt.date()).days + 1
+        if total_days <= max_workers * 3:
+            chunk_days = 3
+        else:
+            chunk_days = min(_math.ceil(total_days / max_workers), 7)
 
     # Chunk listesi oluştur
     chunks = []
